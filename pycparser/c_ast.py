@@ -567,10 +567,11 @@ class EnumeratorList(Node):
     attr_names = ()
 
 class ExprList(Node):
-    __slots__ = ('exprs', 'coord', '__weakref__')
+    __slots__ = ('exprs', 'coord', 'default_args', '__weakref__')
     def __init__(self, exprs, coord=None):
         self.exprs = exprs
         self.coord = coord
+        self.default_args = 0
 
     def children(self):
         nodelist = []
