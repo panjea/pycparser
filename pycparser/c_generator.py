@@ -86,10 +86,13 @@ class CGenerator(object):
             spec = self.functions[n.name.name]
             if spec.args.holy_param_defaults:
                 if len(n.args.exprs) < len(spec.args.params):
+                    delta = len(spec.args.params) - len(n.args.exprs)
                     for arg in spec.args.params:
                         arg = arg.name
                         if arg in spec.args.holy_param_defaults:
                             cargs.append(spec.args.holy_param_defaults[arg])
+                            delta -= 1
+                            if delta <= 0: break
         fref = self._parenthesize_unless_simple(n.name)
         if cargs:
             return fref + '(' + ','.join(cargs) + ',' + self.visit(n.args) + ')'
