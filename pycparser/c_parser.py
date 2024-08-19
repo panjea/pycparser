@@ -1860,14 +1860,18 @@ class CParser(PLYParser):
                                         | argument_expression_list COMMA assignment_expression
                                         | COMMA argument_expression_list
                                         | COMMA COMMA argument_expression_list
+                                        | COMMA COMMA COMMA argument_expression_list
+                                        | COMMA COMMA COMMA COMMA argument_expression_list
+                                        | COMMA COMMA COMMA COMMA COMMA argument_expression_list
+                                        | COMMA COMMA COMMA COMMA COMMA COMMA argument_expression_list
         """
         if p[1] == ',':  ## HolyC call with defaults syntax "f(,,)"
             coms = 0
             for i in range(1, len(p)):
                 if p[i]==',': coms += 1
                 else: break
+            p[i].default_args = coms
             p[0] = p[i]
-
         elif len(p) == 2: # single expr
             p[0] = c_ast.ExprList([p[1]], p[1].coord)
         else:
