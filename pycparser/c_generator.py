@@ -6,6 +6,7 @@
 # Eli Bendersky [https://eli.thegreenplace.net/]
 # License: BSD
 #------------------------------------------------------------------------------
+import json
 from . import c_ast
 
 c2holy = {
@@ -36,6 +37,7 @@ class CGenerator(object):
         self.functions = {}
         self.holy = make_holy
         self.dump_json = not self.holy
+        self.func_def_hint = None
 
     def _make_indent(self):
         return ' ' * self.indent_level
@@ -62,6 +64,9 @@ class CGenerator(object):
             ret += ' ' + n.string
             if not self.holy and n.string.startswith('__macro__'):
                 return n.string[len('__macro__'):]
+            if self.holy and n.string.startswith('__json__'):
+                self.func_def_hint = json.loads(n.string[len('__json__'):])
+                return ''
         return ret
 
     def visit_ArrayRef(self, n):
@@ -101,7 +106,16 @@ class CGenerator(object):
     
     def visit_FuncDef(self, n):
         self.functions[n.decl.name] = n.decl.type
-        decl = self.visit(n.decl)
+        if self.holy and self.func_def_hint and n.decl.name == self.func_def_hint['name'] and self.func_def_hint['defaults']:
+            params = []
+            for decl in n.decl.type.args.params:
+                a = self.visit(decl)
+                if decl.name in self.func_def_hint['defaults']:
+                    a += '=%s' % self.func_def_hint['defaults'][decl.name]
+                params.append(a)
+            decl = '%s %s(%s)' % (self.visit(n.decl.type.type), n.decl.name, ','.join(params))
+        else:
+            decl = self.visit(n.decl)
         if self.dump_json:
             decl = '//JSON//'+self.cast2json(n.decl) + '\n' + decl
         self.indent_level = 0
