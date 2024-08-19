@@ -356,11 +356,13 @@ class CGenerator(object):
 
     def visit_Switch(self, n):
         s = 'switch (' + self.visit(n.cond) + ')\n'
+        self._cases = []
         s += self._generate_stmt(n.stmt, add_indent=True)
+        self._cases = []
         return s
 
     def visit_Case(self, n):
-        print(n)
+        self._cases.append(n)
         if n.range_to:
             assert type(n.expr) is c_ast.Constant and n.expr.type=='int'
             assert type(n.range_to) is c_ast.Constant and n.range_to.type=='int'
@@ -369,7 +371,6 @@ class CGenerator(object):
             if not self.holy:
                 s = []
                 for i in range(range_from, range_to):
-                    print(i)
                     s.append('case %s:\n' % i)
                     for stmt in n.stmts:
                         s.append( self._generate_stmt(stmt, add_indent=True) )
@@ -378,7 +379,10 @@ class CGenerator(object):
                 s = 'case %s ... %s:\n' % (range_from, range_to)
                 for stmt in n.stmts: s += self._generate_stmt(stmt, add_indent=True)
                 return s
-        s = 'case ' + self.visit(n.expr) + ':\n'
+        if not n.expr and not self.holy:
+            s = self._make_indent()+'case %s:\n' % (len(self._cases)-1)
+        else:
+            s = 'case ' + self.visit(n.expr) + ':\n'
         for stmt in n.stmts:
             s += self._generate_stmt(stmt, add_indent=True)
         return s
