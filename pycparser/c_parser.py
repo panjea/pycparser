@@ -1858,8 +1858,17 @@ class CParser(PLYParser):
     def p_argument_expression_list(self, p):
         """ argument_expression_list    : assignment_expression
                                         | argument_expression_list COMMA assignment_expression
+                                        | COMMA argument_expression_list
+                                        | COMMA COMMA argument_expression_list
         """
-        if len(p) == 2: # single expr
+        if p[1] == ',':  ## HolyC call with defaults syntax "f(,,)"
+            coms = 0
+            for i in range(1, len(p)):
+                if p[i]==',': coms += 1
+                else: break
+            p[0] = p[i]
+
+        elif len(p) == 2: # single expr
             p[0] = c_ast.ExprList([p[1]], p[1].coord)
         else:
             p[1].exprs.append(p[3])
