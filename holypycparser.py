@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 import os, sys, subprocess, json, ctypes
-assert os.path.isdir('./pycparser')
-sys.path.insert(0, './pycparser')
+sys.path.insert(0, os.path.split(os.path.abspath(__file__))[0]+'/pycparser' )
 import pycparser
 from pycparser import c_generator
 
@@ -95,12 +94,20 @@ def holyjit( h, output='/tmp/holyjit.so', debug=False ):
 	if debug: print(scope)
 	return scope
 
-def holyc_to_c(hc):
+def holyc_to_c(hc, strip_comments=True):
 	if hc.endswith( ('.HC', '.hc') ):
 		hc = open(hc,'rb').read().decode('utf-8')
 	tmp = '/tmp/hc2c.HC'
 	if type(hc) is list:
 		hc = '\n'.join(hc)
+
+	if strip_comments:
+		a = []
+		for ln in hc.splitlines():
+			if ln.startswith('//'): continue
+			a.append(ln)
+		hc = '\n'.join(a)
+
 	open(tmp,'wb').write(hc.encode('utf-8'))
 	ast = parse(tmp)
 	gen = c_generator.CGenerator()
