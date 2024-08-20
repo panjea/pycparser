@@ -115,7 +115,7 @@ class CLexer(object):
         )
 
     holyc = ('U0','I8', 'U8', 'I16', 'U16', 'I32', 'U32', 'I64', 'U64', 'F64')
-    templeOS = ('Cd', '__DIR__')
+    templeOS = ('Cd', '__DIR__', 'MapFileLoad')
     keyword_map = {}
 
     for keyword in keywords:
