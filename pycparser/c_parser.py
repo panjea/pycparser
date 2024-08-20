@@ -2009,7 +2009,6 @@ class CParser(PLYParser):
         """ external_declaration    : statement
         """
         coord = self._token_coord(p, 1)
-        print(type(p[1]))
         p[1].jit = True
         p[0] = c_ast.HolyJit(p[1])
 
@@ -2019,5 +2018,10 @@ class CParser(PLYParser):
 
     def p_labeled_statement_holy1(self, p):
         """ labeled_statement : CASE COLON pragmacomp_or_statement """
-        for i in range(len(p)): print(i, p[i])
         p[0] = c_ast.Case(None, [p[3]], self._token_coord(p, 1))
+
+    def p_cd_declaration(self, p):
+        """ external_declaration    : Cd LPAREN __DIR__ RPAREN SEMI
+                                    | Cd LPAREN STRING_LITERAL RPAREN SEMI
+        """
+        p[0] = [c_ast.FuncCall(p[1], args=p[3], coord=self._token_coord(p, 1), jit=True)]
