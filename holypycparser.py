@@ -94,7 +94,7 @@ def holyjit( h, output='/tmp/holyjit.so', debug=False ):
 	if debug: print(scope)
 	return scope
 
-def holyc_to_c(hc, strip_comments=True):
+def holyc_to_c(hc, strip_comments=True, pass_includes=True):
 	if hc.endswith( ('.HC', '.hc') ):
 		hc = open(hc,'rb').read().decode('utf-8')
 	tmp = '/tmp/hc2c.HC'
@@ -107,6 +107,16 @@ def holyc_to_c(hc, strip_comments=True):
 			if ln.startswith('//'): continue
 			a.append(ln)
 		hc = '\n'.join(a)
+
+	if pass_includes:
+		a = []
+		for ln in hc.splitlines():
+			if ln.strip().startswith('#include'):
+				ln = '#pragma __macro__' + ln
+			a.append(ln)
+		hc = '\n'.join(a)
+
+
 
 	open(tmp,'wb').write(hc.encode('utf-8'))
 	ast = parse(tmp)
