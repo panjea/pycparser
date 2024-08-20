@@ -20,24 +20,28 @@ class holywrapper(object):
 		self.name = meta['name']
 		cargs = []
 		for arg in meta['args']:
-			if arg.startswith('U8'):
+			if arg.startswith( ('U8', 'unsigned char') ):
 				if '*' in arg:
 					cargs.append(ctypes.c_char_p)
 				else:
 					cargs.append(ctypes.c_char)
-			elif arg.startswith('F64'):
+			elif arg.startswith( ('F64', 'double') ):
 				cargs.append(ctypes.c_double)
-			elif arg.startswith('U'):
+			elif arg.startswith( ('F32', 'float') ):
+				cargs.append(ctypes.c_float)
+			elif arg.startswith( ('U', 'unsigned ') ):
 				cargs.append(ctypes.c_uint)
 			else:
 				cargs.append(ctypes.c_int)
 		if cargs:
 			f.argtypes = tuple(cargs)
 
-		if meta['returns'] == 'I32':
+		if meta['returns'] in ('I32', 'int'):
 			f.restype = ctypes.c_int
-		elif meta['returns'] == 'F64':
+		elif meta['returns'] in ('F64', 'double'):
 			f.restype = ctypes.c_double
+		elif meta['returns'] in ('F32', 'float'):
+			f.restype = ctypes.c_float
 
 	def __call__(self, *args):
 		cargs = []
@@ -210,7 +214,7 @@ if __name__=='__main__':
 				c = holyc_to_c(path)
 				print(c)
 				if '--test-jit' in sys.argv:
-					s = holyjit(c)
+					s = holyjit(c, output='/tmp/%s.so' %file)
 					print(s)
 				print('✝'*80)
 				hc = c_to_holyc(c)
