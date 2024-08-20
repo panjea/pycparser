@@ -2025,3 +2025,9 @@ class CParser(PLYParser):
                                     | Cd LPAREN STRING_LITERAL RPAREN SEMI
         """
         p[0] = [c_ast.FuncCall(p[1], args=p[3], coord=self._token_coord(p, 1), jit=True)]
+
+    def p_temple_os_declaration(self, p):
+        """ external_declaration    : MapFileLoad LPAREN STRING_LITERAL RPAREN SEMI
+        """
+        p[0] = [c_ast.FuncCall( p[1] , args=p[3], coord=self._token_coord(p, 1), jit=True)]
+
