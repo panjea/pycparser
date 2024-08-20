@@ -7,7 +7,6 @@
 # License: BSD
 #------------------------------------------------------------------------------
 import re
-
 from .ply import lex
 from .ply.lex import TOKEN
 
@@ -116,7 +115,7 @@ class CLexer(object):
         )
 
     holyc = ('U0','I8', 'U8', 'I16', 'U16', 'I32', 'U32', 'I64', 'U64', 'F64')
-
+    templeOS = ('Cd', '__DIR__')
     keyword_map = {}
 
     for keyword in keywords:
@@ -125,14 +124,14 @@ class CLexer(object):
     for keyword in keywords_new:
         keyword_map[keyword[:2].upper() + keyword[2:].lower()] = keyword
 
-    for keyword in holyc:
+    for keyword in holyc + templeOS:
         keyword_map[keyword] = keyword
 
 
     ##
     ## All the tokens recognized by the lexer
     ##
-    tokens = keywords + keywords_new + holyc + (
+    tokens = keywords + keywords_new + holyc + templeOS +(
         # Identifiers
         'ID',
 
