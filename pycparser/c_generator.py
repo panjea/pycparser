@@ -49,6 +49,8 @@ class CGenerator(object):
     def generic_visit(self, node):
         if node is None:
             return ''
+        elif type(node) is str:
+            return node
         else:
             return ''.join(self.visit(c) for c_name, c in node.children())
 
@@ -84,8 +86,15 @@ class CGenerator(object):
             return n.name + '()'
     
     def visit_FuncCall(self, n):
+        if type(n.name) is str:  ## TempleOS shell calls
+            if n.jit:
+                return '//JIT//%s(%s)' %(n.name, self.visit(n.args))
+            else:
+                return '%s(%s)' %(n.name, self.visit(n.args))
+
         if self.holy and n.name.name=='printf':
             return self.visit(n.args)
+
         cargs = []
         if n.name.name in self.functions:
             spec = self.functions[n.name.name]
