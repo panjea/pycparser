@@ -863,6 +863,30 @@ class CParser(PLYParser):
         """
         p[0] = p[1]
 
+    def p_function_specifier_holyg(self, p):
+        """ type_qualifier  : BACKTICK
+                            | BACKTICK identifier_list BACKTICK
+                            | BACKTICK REGISTER identifier_list BACKTICK
+                            | BACKTICK constant BACKTICK identifier_list BACKTICK
+                            | BACKTICK constant BACKTICK REGISTER identifier_list BACKTICK
+                            | BACKTICK constant BACKTICK
+        """
+        s = []
+        for i in range(1, len(p)):
+            a = p[i]
+            if type(a) is str:
+                s.append(a)
+            elif type(a) is c_ast.Constant:
+                assert a.type=='int'
+                s.append(str(a.value))
+            elif type(a) is c_ast.ParamList:
+                s.append(
+                    ','.join([param.name for param in a.params])
+                )
+            else:
+                s.append(self.visit(a))
+        p[0] = ' '.join(s)
+        
     def p_type_specifier_no_typeid(self, p):
         """ type_specifier_no_typeid  : VOID
                                       | _BOOL
