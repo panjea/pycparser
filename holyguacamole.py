@@ -7,7 +7,7 @@ import pycparser
 
 tests = [
 '''
-`0`register a0,a1`U0 A(I32 x, I32 y)
+`0`register a0,a1,a2,a3,a4,a5,a6,a8`U0 A(I32 x, I32 y)
 {
 	if (x < y) return -1;
 	return x + y;
@@ -15,7 +15,7 @@ tests = [
 ''',
 
 '''
-`register a0,a1`U0 A(I32 x, I32 y)
+`register a0,a1,a2,a3,a4,a5,a6,a8`U0 A(I32 x, I32 y)
 {
 	if (x < y) return -1;
 	return x + y;
@@ -25,7 +25,7 @@ tests = [
 
 '''
 `0
-`register a0,a1
+`register a0,a1,a2,a3,a4,a5,a6,a8
 `U0 A(I32 x, I32 y)
 {
 	if (x < y) return -1;
@@ -34,10 +34,10 @@ tests = [
 ''',
 
 '''
-// cpu core
+// thread
 `0
 // registers
-`a0,a1
+`a0,a1,a2,a3,a4,a5,a6,a8
 `U0 A(I32 x, I32 y)
 {
 	if (x < y) return -1;
@@ -46,12 +46,27 @@ tests = [
 ''',
 
 '''
-`0`a0,a1`U0 A(I32 x, I32 y)
+`0`a0,a1,a2,a3,a4,a5,a6,a8`U0 A(I32 x, I32 y)
 {
 	if (x < y) return -1;
 	return x + y;
 }
 ''',
+
+## threads
+'''
+`0`a0,a1,a2,a3,a4,a5,a6,a8`U0 ThreadA(I32 x, I32 y) {
+	if (x < y) return -1;
+	return x + y;
+}
+
+
+`1`s0,s1,s2,s3,s4,s5,s6,s8`U0 ThreadB(I32 x, I32 y) {
+	if (x < y) return -1;
+	return x + y;
+}
+''',
+
 
 ]
 
@@ -275,6 +290,25 @@ def parse_asm(ln, debug=False):
 
 	return r
 
+
+def print_asm(asm, *labels):
+	if asm.startswith('/') and len(asm) < 128:
+		if os.path.isfile(asm): asm = open(asm,'rb').read().decode('utf-8')
+	lab = None
+	for idx, ln in enumerate(asm.splitlines()):
+		#print(ln)
+		a = parse_asm(ln)
+		if 'label' in a:
+			lab = a['label']
+		if 'data' in a: continue
+		if labels:
+			if lab in labels:
+				if 'vis' in a: print(a['vis'])
+				else: print(a)
+		else:
+			if 'vis' in a: print(a['vis'])
+			else: print(a)
+
 REGS = ['x%s' % i for i in range(32)]
 REGS += [
 	'zero',
@@ -316,4 +350,5 @@ for t in tests:
 	print('c2asm output:', a)
 	print('reg_replace_map:', func_reg_replace)
 	a = asm2asm(a, func_reg_replace)
-	print('asm2asm output:', a)
+	print('asm2asm output:')
+	print_asm(a)
