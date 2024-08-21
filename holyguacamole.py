@@ -344,6 +344,7 @@ asm_help = {
 
 
 def asm2o(s, name='asm2o'):
+	s += '\n'
 	asm = '/tmp/asm2o.s'
 	open(asm,'wb').write(s.encode('utf-8'))
 	o = '/tmp/%s.o' % name
@@ -509,7 +510,7 @@ TIMER = '''
 static inline U64 mtime() { return readu64(MTIME); }
 static inline U64 mtimecmp_0() { return readu64(MTIMECMP_0); }
 static inline U64 set_timeout(U64 timeout) { writeu64(MTIMECMP_0, mtime() + timeout); }
-static inline kernel_timeout(void) { writeu64(MTIMECMP_0, mtime() + 100); }
+static inline void kernel_timeout(void) { writeu64(MTIMECMP_0, mtime() + 100); }
 '''
 
 ARCH_ASM = '''
@@ -602,7 +603,47 @@ NO_UART = '''
 #define uart_init(...)
 '''
 
-def make(asm, spawn_funcs):
+LIB_UART = '''
+#define UART_BASE 0x10000000
+#define UART_RBR_OFFSET 0  /* In:  Recieve Buffer Register */
+#define UART_THR_OFFSET 0  /* Out: Transmitter Holding Register */
+#define UART_DLL_OFFSET 0  /* Out: Divisor Latch Low */
+#define UART_IER_OFFSET 1  /* I/O: Interrupt Enable Register */
+#define UART_DLM_OFFSET 1  /* Out: Divisor Latch High */
+#define UART_FCR_OFFSET 2  /* Out: FIFO Control Register */
+#define UART_IIR_OFFSET 2  /* I/O: Interrupt Identification Register */
+#define UART_LCR_OFFSET 3  /* Out: Line Control Register */
+#define UART_MCR_OFFSET 4  /* Out: Modem Control Register */
+#define UART_LSR_OFFSET 5  /* In:  Line Status Register */
+#define UART_MSR_OFFSET 6  /* In:  Modem Status Register */
+#define UART_SCR_OFFSET 7  /* I/O: Scratch Register */
+#define UART_MDR1_OFFSET 8 /* I/O:  Mode Register */
+#define PLATFORM_UART_INPUT_FREQ 10000000
+#define PLATFORM_UART_BAUDRATE 115200
+static U8 *uart_base_addr = (U8 *)UART_BASE;
+static void set_reg(U32 offset, U32 val){ writeu8(uart_base_addr + offset, val);}
+static U32 get_reg(U32 offset){ return readu8(uart_base_addr + offset);}
+static void uart_putc(U8 ch){ set_reg(UART_THR_OFFSET, ch);}
+static void uart_print(char *str){ while (*str) uart_putc(*str++);}
+
+static inline void uart_init(){
+  U16 bdiv = (PLATFORM_UART_INPUT_FREQ + 8 * PLATFORM_UART_BAUDRATE) / (16 * PLATFORM_UART_BAUDRATE);
+  set_reg(UART_IER_OFFSET, 0x00); /* Disable all interrupts */
+  set_reg(UART_LCR_OFFSET, 0x80); /* Enable DLAB */
+  if (bdiv) {
+    set_reg(UART_DLL_OFFSET, bdiv & 0xff); /* Set divisor low byte */
+    set_reg(UART_DLM_OFFSET, (bdiv >> 8) & 0xff); /* Set divisor high byte */
+  }
+  set_reg(UART_LCR_OFFSET, 0x03); /* 8 bits, no parity, one stop bit */
+  set_reg(UART_FCR_OFFSET, 0x01); /* Enable FIFO */
+  set_reg(UART_MCR_OFFSET, 0x00); /* No modem control DTR RTS */
+  get_reg(UART_LSR_OFFSET); /* Clear line status */
+  get_reg(UART_RBR_OFFSET); /* Read receive buffer */  
+  set_reg(UART_SCR_OFFSET, 0x00); /* Set scratchpad */
+}
+'''
+
+def make(asm, spawn_funcs, use_uart=True):
 	a = c2asm(
 		ARCH + ARCH_ASM + CPU_H + PROC_H + INTERRUPTS + TIMER + TRAP_C, 
 		{},[],
@@ -617,7 +658,14 @@ def make(asm, spawn_funcs):
 
 	c = [
 		ARCH, LIBC, CPU_H, 
-		PROC_H, INTERRUPTS, ARCH_ASM, NO_UART, TIMER,
+		PROC_H, INTERRUPTS, ARCH_ASM, TIMER,
+	]
+	if use_uart:
+		c.append(LIB_UART)
+	else:
+		c.append(NO_UART)
+
+	c += [
 		'extern I32 active_pid;',
 		'extern struct HolyThread __proc_list[PROC_NAME_MAXLEN];',
 	] + gen_firmware(spawn_funcs)
@@ -647,10 +695,27 @@ def make(asm, spawn_funcs):
 		subprocess.check_call(cmd.split())
 	return elf
 
-for t in tests:
-	print(t)
-	print('-'*80)
-	c = hpp.holyc_to_c( t )
+
+def run_tests():
+	for t in tests:
+		print(t)
+		print('-'*80)
+		c = hpp.holyc_to_c( t )
+		print(c)
+		print('_'*80)
+		func_reg_replace = {}
+		spawn_funcs = []
+		a = c2asm(c, func_reg_replace, spawn_funcs)
+		print('c2asm output:', a)
+		print('reg_replace_map:', func_reg_replace)
+		a = asm2asm(a, func_reg_replace)
+		print('asm2asm output:')
+		print_asm(a)
+		elf = make(a, spawn_funcs)
+
+def build(files):
+	a = [open(f,'rb').read().decode('utf-8') for f in files]
+	c = hpp.holyc_to_c( a )
 	print(c)
 	print('_'*80)
 	func_reg_replace = {}
@@ -662,4 +727,16 @@ for t in tests:
 	print('asm2asm output:')
 	print_asm(a)
 	elf = make(a, spawn_funcs)
+	return elf
 
+
+if __name__=='__main__':
+	files = []
+	for arg in sys.argv:
+		if arg.endswith(('.c', '.hc', '.HC')):
+			files.append(arg)
+
+	if not files:
+		run_tests()
+	else:
+		build(files)
