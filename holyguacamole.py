@@ -347,7 +347,9 @@ def asm2o(s, name='asm2o'):
 	asm = '/tmp/asm2o.s'
 	open(asm,'wb').write(s.encode('utf-8'))
 	o = '/tmp/%s.o' % name
-	cmd = [ 'riscv64-unknown-elf-as', '-g', '-o',o, asm]
+	cmd = [ 'riscv64-unknown-elf-as', 
+		#'-march=rv64g', '-mabi=lp64', 
+		'-g', '-o',o, asm]
 	print(cmd)
 	subprocess.check_call(cmd)
 	return o
@@ -416,6 +418,30 @@ struct HolyThread {
 };
 '''
 
+
+FIRMWARE_MAIN = r'''
+extern void trap_entry();
+void firmware_main(){
+  uart_init();
+  kernel_threads_init();
+  uart_print("[firmware_main memset proc_list]\n");
+  for (int i = %s; i < PROC_TOTAL_COUNT; i++) {
+    memset(&__proc_list[i], 0, sizeof(__proc_list[i]));
+    __proc_list[i].state = PROC_STATE_NONE;
+  }
+  active_pid = -1;
+  set_timeout(10000); // setup M-mode trap vector
+  csrw_mtvec((U64)trap_entry); // enable M-mode timer interrupt  
+  csrw_mie(MIE_MTIE);
+  csrs_mstatus(MSTAUTS_MIE); // enable MIE in mstatus
+  uart_print("[firmware_main waiting...]\n");
+  while(1) {
+  	uart_putc('<');
+  	uart_putc('>');
+  }
+}
+'''
+
 def gen_firmware( spawn_funcs, stack_mb=1 ):
 	out = []
 	for f in spawn_funcs:
@@ -439,6 +465,9 @@ def gen_firmware( spawn_funcs, stack_mb=1 ):
 			'__proc_list[%s] = __proc__%s;' % (p, o['name']),
 		]
 	out.append('}')
+
+	out.append(FIRMWARE_MAIN % len(spawn_funcs))
+
 	return out
 
 
@@ -524,6 +553,55 @@ REMAP_TRAP = {
 	'a7' : 'gp',
 }
 
+def gen_trap_s( ra=True ):
+	s = '''
+.equ REGSZ, 8
+.global trap_entry
+trap_entry:
+	csrrw sp, mscratch, sp
+	la tp, trap_cpu
+	#sd ra, (1 * REGSZ)(tp)
+	## save program counter
+	csrr t0, mepc
+	sd t0, (32 * REGSZ)(tp)
+	## call trap_handler C function
+	la t0, trap_stack_top
+	ld sp, 0(t0)
+	call kernel_trap_handler
+	## restore program counter
+	ld t0, (32 * REGSZ)(tp)
+	csrw mepc, t0
+	csrr sp, mscratch
+	#ld ra, (1 * REGSZ)(tp)
+	mret
+	'''
+	if ra: s = s.replace('#sd', 'sd').replace('#ld','ld')
+	return s
+
+
+#.attribute arch, "rv64g"
+START_S = '''
+.section .text
+.global _start
+_start:
+	bne a0, x0, _start # loop if hartid is not 0
+	li sp, 0x80200000 # setup stack pointer
+	j firmware_main # jump to c entry
+'''
+
+def clean_asm(asm):
+	a = []
+	for ln in asm.splitlines():
+		if ln.strip().startswith(('.file', '.option', '.attribute')): continue
+		a.append(ln)
+	return '\n'.join(a)
+
+NO_UART = '''
+#define uart_putc(...)
+#define uart_print(...)
+#define uart_init(...)
+'''
+
 def make(asm, spawn_funcs):
 	a = c2asm(
 		ARCH + ARCH_ASM + CPU_H + PROC_H + INTERRUPTS + TIMER + TRAP_C, 
@@ -534,12 +612,12 @@ def make(asm, spawn_funcs):
 	print_asm(a)
 	trap_handler = asm2o(a, name='trap_handler')
 
-	s = [asm]
+	s = [START_S, gen_trap_s(), clean_asm(asm)]
 	o = asm2o('\n'.join(s))
 
 	c = [
 		ARCH, LIBC, CPU_H, 
-		PROC_H,
+		PROC_H, INTERRUPTS, ARCH_ASM, NO_UART, TIMER,
 		'extern I32 active_pid;',
 		'extern struct HolyThread __proc_list[PROC_NAME_MAXLEN];',
 	] + gen_firmware(spawn_funcs)
