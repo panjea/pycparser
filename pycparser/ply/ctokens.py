@@ -38,6 +38,7 @@ tokens = [
 
     # Ellipsis (...)
     'ELLIPSIS',
+    'BACKTICK',
 ]
     
 # Operators
@@ -98,6 +99,7 @@ t_PERIOD           = r'\.'
 t_SEMI             = r';'
 t_COLON            = r':'
 t_ELLIPSIS         = r'\.\.\.'
+t_BACKTICK         = r'`'
 
 # Identifiers
 t_ID = r'[A-Za-z_][A-Za-z0-9_]*'
