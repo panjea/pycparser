@@ -72,6 +72,7 @@ tests = [
 
 def parse_holyg(ln):
 	ln = ln[ : ln.rindex('`') ].strip()
+	thread_id = -1
 	regs = {}
 	for i, a in enumerate(ln.split('`')):
 		if ',' in a:
@@ -83,14 +84,13 @@ def parse_holyg(ln):
 					regs[ reg ] = reg.replace('a', 's')
 				elif reg.startswith('s'):
 					regs[ reg ] = reg.replace('s', 'a')
-			break
-	return regs
+		elif a.strip().isdigit():
+			thread_id = int(a.strip())
 
-def c2asm( c, reg_replace_map, opt=0, strip_backticks=True ):
+	return (thread_id,regs)
+
+def c2asm( c, reg_replace_map, spawn_funcs, opt=0, strip_backticks=True ):
 	if type(c) is list: c = '\n'.join(c)
-
-	
-
 	if strip_backticks:
 		a = []
 		prev = None
@@ -99,7 +99,11 @@ def c2asm( c, reg_replace_map, opt=0, strip_backticks=True ):
 				assert prev.startswith('//JSON//')
 				finfo = json.loads( prev[ len('//JSON//') : ] )
 				print(finfo)
-				reg_replace_map[finfo['name']] = parse_holyg(ln)
+				t,r = parse_holyg(ln)
+				reg_replace_map[finfo['name']] = r
+				if t >= 0:
+					finfo['thread'] = t
+					spawn_funcs.append(finfo)
 				ln = ln.split('`')[-1]
 
 			a.append(ln)
@@ -339,6 +343,125 @@ asm_help = {
 }
 
 
+def asm2o(s, name='asm2o'):
+	asm = '/tmp/asm2o.s'
+	open(asm,'wb').write(s.encode('utf-8'))
+	o = '/tmp/%s.o' % name
+	cmd = [ 'riscv64-unknown-elf-as', '-g', '-o',o, asm]
+	print(cmd)
+	subprocess.check_call(cmd)
+	return o
+
+LINKER_SCRIPT = '''
+ENTRY(_start)
+MEMORY {} /* default */
+. = 0x80000000;
+SECTIONS {}
+'''
+
+ARCH = '''
+#define MACHINE_BITS 64
+#define BITS_PER_LONG MACHINE_BITS
+#define bool _Bool
+#define true 1
+#define false 0
+typedef unsigned char U8;
+typedef unsigned short U16;
+typedef unsigned int U32;
+typedef unsigned long U64;
+typedef signed char I8;
+typedef signed short I16;
+typedef signed int I32;
+typedef signed long I64;
+typedef U64 size_t;
+'''
+
+CPU_H = 'struct cpu {%s} __attribute__((packed));' % '\n'.join(['U64 x%s;' % i for i in range(32)]+['U64 pc;'])
+
+PROC_H = '''
+#define PROC_NAME_MAXLEN 64
+#define PROC_TOTAL_COUNT 16
+
+enum proc_state {
+	PROC_STATE_NONE = 0,
+	PROC_STATE_READY,
+	PROC_STATE_RUNNING,
+};
+
+struct HolyThread {
+	enum proc_state state;
+	U32 pid;
+	U8 name[PROC_NAME_MAXLEN];
+	struct cpu cpu;
+	U64 hartid;
+};
+'''
+
+def gen_firmware( spawn_funcs, stack_mb=1 ):
+	out = []
+	for f in spawn_funcs:
+		out.append('extern void %s();' % f['name'])
+		out.append('extern void %s();' % f['name'])
+		out.append('U8 __stack__%s[%s];' % (f['name'], int(1024*1024*stack_mb) ))
+
+	out += ['void kernel_threads_init(){']
+	for p,o in enumerate(spawn_funcs):
+		out += [
+			'struct HolyThread __proc__%s = {' % o['name'],
+			'  .name = "%s",' % o['name'],
+			'  .pid = %s,' % (p+0),
+			'  .hartid = 0,',  ## cpu core
+			'  .state = PROC_STATE_READY,',
+			'  .cpu = {',
+			'      .pc = (U64)%s,' % o['name'],
+			'      .x2 = (U64)__stack__%s,' % o['name'],
+			'  }};',
+			#'uart_print("[proc_init] proc_list:%s");' % p,
+			'__proc_list[%s] = __proc__%s;' % (p, o['name']),
+		]
+	out.append('}')
+	return out
+
+def make(asm, spawn_funcs):
+	s = [asm]
+	#tmps = '/tmp/make.s'
+	#open(tmps,'wb').write('\n'.join(s).encode('utf-8'))
+	o = asm2o(a)
+
+	c = [
+		ARCH, CPU_H, 
+		PROC_H,
+		'extern I32 active_pid;',
+		'extern struct HolyThread __proc_list[PROC_NAME_MAXLEN];',
+	] + gen_firmware(spawn_funcs)
+
+	tmpc = '/tmp/make.c'
+	open(tmpc,'wb').write('\n'.join(c).encode('utf-8'))
+
+
+
+	tmpld = '/tmp/linker.ld'
+	open(tmpld,'wb').write(LINKER_SCRIPT.encode('utf-8'))
+
+	elf = '/tmp/test.elf'
+	cmd = [
+		'riscv64-unknown-elf-gcc', '-mcmodel=medany', '-ffunction-sections',
+		'-ffreestanding', '-nostdlib', '-nostartfiles', '-nodefaultlibs',
+		'-Wl,--no-relax', 
+		'-T',tmpld, 
+		'-O0', '-g', '-o', elf, o, tmpc,
+	]
+	print(cmd)
+	subprocess.check_call(cmd)
+	if '--run' in sys.argv:
+		cmd = 'riscv64-unknown-elf-objcopy -O binary -S %s /tmp/firmware.bin' % elf
+		print(cmd)
+		subprocess.check_call(cmd.split())
+		cmd = 'qemu-system-riscv64 -machine virt -smp 2 -m 2G -serial stdio -bios /tmp/firmware.bin -s -device VGA'
+		print(cmd)
+		subprocess.check_call(cmd.split())
+	return elf
+
 for t in tests:
 	print(t)
 	print('-'*80)
@@ -346,9 +469,12 @@ for t in tests:
 	print(c)
 	print('_'*80)
 	func_reg_replace = {}
-	a = c2asm(c, func_reg_replace)
+	spawn_funcs = []
+	a = c2asm(c, func_reg_replace, spawn_funcs)
 	print('c2asm output:', a)
 	print('reg_replace_map:', func_reg_replace)
 	a = asm2asm(a, func_reg_replace)
 	print('asm2asm output:')
 	print_asm(a)
+	elf = make(a, spawn_funcs)
+
