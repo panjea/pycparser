@@ -190,6 +190,9 @@ class CLexer(object):
         'PPHASH',       # '#'
         'PPPRAGMA',     # 'pragma'
         'PPPRAGMASTR',
+
+        # HolyG
+        'BACKTICK',    
     )
 
     ##
@@ -430,6 +433,7 @@ class CLexer(object):
     t_SEMI              = r';'
     t_COLON             = r':'
     t_ELLIPSIS          = r'\.\.\.'
+    t_BACKTICK          = r'`'
 
     # Scope delimiters
     # To see why on_lbrace_func is needed, consider:
