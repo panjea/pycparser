@@ -352,6 +352,25 @@ def asm2o(s, name='asm2o'):
 	subprocess.check_call(cmd)
 	return o
 
+LIBC = r'''
+void *memset(void *s, I32 c, U64 n){
+	U8 *p = s;
+	while (n--) *p++ = (U8)c;
+	return s;
+}
+void *memcpy(void *dest, const void *src, U64 n){
+	U8 *d = dest;
+	const U8 *s = src;
+	while (n--) *d++ = *s++;
+	return dest;
+}
+#define VRAM ((volatile U8 *)0x50000000)
+void putpixel(I32 x, I32 y, U8 c){
+	VRAM[y*320 + x] = c;
+}
+'''
+
+
 LINKER_SCRIPT = '''
 ENTRY(_start)
 MEMORY {} /* default */
@@ -422,14 +441,104 @@ def gen_firmware( spawn_funcs, stack_mb=1 ):
 	out.append('}')
 	return out
 
+
+TRAP_C = r'''
+struct cpu trap_cpu;
+U8 trap_stack[1 << 20];
+void *trap_stack_top = &trap_stack[sizeof(trap_stack) - 1];
+I32 active_pid;
+struct HolyThread __proc_list[PROC_NAME_MAXLEN] = {};
+
+__attribute__((optimize("no-tree-loop-distribute-patterns")))
+void kernel_trap_handler() {
+	U64 mcause = csrr_mcause();
+	if (mcause==MCAUSE_INTR_M_TIMER){
+		if (active_pid < 0){
+			active_pid = 0;
+			trap_cpu = __proc_list[0].cpu;
+		}
+		__proc_list[active_pid].cpu = trap_cpu; // save cpu state for the active process
+		__proc_list[active_pid].state = PROC_STATE_READY; // suspend the active process
+		for (int ring_index = 1; ring_index <= PROC_TOTAL_COUNT; ring_index++){
+			int real_index = (active_pid + ring_index) % PROC_TOTAL_COUNT;
+			struct HolyThread *proc = &__proc_list[real_index];
+			if (proc->state == PROC_STATE_READY){
+				trap_cpu = proc->cpu;
+				active_pid = proc->pid;
+				break;
+			}
+		}
+		kernel_timeout();
+	}
+}
+'''
+
+
+TIMER = '''
+#define MTIME 0x200bff8
+#define MTIMECMP_0 0x2004000
+static inline U64 mtime() { return readu64(MTIME); }
+static inline U64 mtimecmp_0() { return readu64(MTIMECMP_0); }
+static inline U64 set_timeout(U64 timeout) { writeu64(MTIMECMP_0, mtime() + timeout); }
+static inline kernel_timeout(void) { writeu64(MTIMECMP_0, mtime() + 100); }
+'''
+
+ARCH_ASM = '''
+#define readu8(addr) (*(const U8 *)(addr))
+#define readu16(addr) (*(const U16 *)(addr))
+#define readu32(addr) (*(const U32 *)(addr))
+#define readu64(addr) (*(const U64 *)(addr))
+#define writeu8(addr, val) (*(U8 *)(addr) = (val))
+#define writeu16(addr, val) (*(U16 *)(addr) = (val))
+#define writeu32(addr, val) (*(U32 *)(addr) = (val))
+#define writeu64(addr, val) (*(U64 *)(addr) = (val))
+
+//GOTCHA::BREAKS-ASM-PARSER//static inline void csrw_mtvec(const volatile u64 val) { asm volatile("csrw mtvec, %0" :: "r"(val)); } // note the space
+static inline void csrw_mtvec(const volatile U64 val) { asm volatile("csrw mtvec,%0" :: "r"(val)); }
+static inline void csrw_mie(const volatile U64 val) { asm volatile("csrw mie,%0" :: "r"(val)); }
+static inline void csrs_mstatus(const volatile U64 val) { asm volatile("csrs mstatus,%0" :: "r"(val)); }
+static inline U64 csrr_mcause(){
+  volatile U64 val;
+  asm volatile("csrr %0,mcause" : "=r"(val) :);
+  return val;
+}
+'''
+
+INTERRUPTS = '''
+#define MSTAUTS_MIE (0x1L << 3)
+#define MIE_MTIE (0x1L << 7)
+#define MIE_MEIE (0x1L << 11)
+#define MCAUSE_INTR_M_TIMER ((0x1L << (MACHINE_BITS - 1)) | 7)
+#define MCAUSE_INTR_M_EXTER ((0x1L << (MACHINE_BITS - 1)) | 11)
+#define MCAUSE_INNER_M_ILLEAGEL_INSTRUCTION (0x2L)
+'''
+
+REMAP_TRAP = {
+	'a0' : 't0',  ## t0 is x5
+	'a1' : 't1',
+	'a2' : 't2',
+	'a3' : 't3',
+	'a4' : 't4',
+	'a5' : 't5',
+	'a6' : 't6',
+	'a7' : 'gp',
+}
+
 def make(asm, spawn_funcs):
+	a = c2asm(
+		ARCH + ARCH_ASM + CPU_H + PROC_H + INTERRUPTS + TIMER + TRAP_C, 
+		{},[],
+		opt=1
+	)
+	a = asm2asm(a, reg_replace=REMAP_TRAP )
+	print_asm(a)
+	trap_handler = asm2o(a, name='trap_handler')
+
 	s = [asm]
-	#tmps = '/tmp/make.s'
-	#open(tmps,'wb').write('\n'.join(s).encode('utf-8'))
-	o = asm2o(a)
+	o = asm2o('\n'.join(s))
 
 	c = [
-		ARCH, CPU_H, 
+		ARCH, LIBC, CPU_H, 
 		PROC_H,
 		'extern I32 active_pid;',
 		'extern struct HolyThread __proc_list[PROC_NAME_MAXLEN];',
@@ -437,8 +546,6 @@ def make(asm, spawn_funcs):
 
 	tmpc = '/tmp/make.c'
 	open(tmpc,'wb').write('\n'.join(c).encode('utf-8'))
-
-
 
 	tmpld = '/tmp/linker.ld'
 	open(tmpld,'wb').write(LINKER_SCRIPT.encode('utf-8'))
@@ -449,7 +556,7 @@ def make(asm, spawn_funcs):
 		'-ffreestanding', '-nostdlib', '-nostartfiles', '-nodefaultlibs',
 		'-Wl,--no-relax', 
 		'-T',tmpld, 
-		'-O0', '-g', '-o', elf, o, tmpc,
+		'-O0', '-g', '-o', elf, o, trap_handler, tmpc,
 	]
 	print(cmd)
 	subprocess.check_call(cmd)
